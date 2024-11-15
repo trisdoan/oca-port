@@ -29,6 +29,7 @@ MIG_TIPS = "\n".join(
         f"\n{bc.BOLD}{bc.OKCYAN}The next steps are:{bc.END}",
         ("\t1) Reduce the number of commits " f"('{bc.DIM}OCA Transbot...{bc.END}'):"),
         f"\t\t=> {bc.BOLD}{MIG_MERGE_COMMITS_URL}{bc.END}",
+        "{squashable_commits}",
         "\t2) Adapt the module to the {version} version:",
         f"\t\t=> {bc.BOLD}" "{mig_tasks_url}" f"{bc.END}",
         (
@@ -56,6 +57,20 @@ BLACKLIST_TIPS = "\n".join(
         f"\t\t=> {bc.BOLD}" "{new_pr_url}" f"{bc.END}",
     ]
 )
+
+MESSAGE_TO_SQUASH = [
+    "Added translation using Weblate",
+    "Translated using Weblate",
+    "Update translation files",
+]
+AUTHOR_EMAILS_TO_SQUASH = [
+    "transbot@odoo-community.org",
+    "noreply@weblate.org",
+    "oca-git-bot@odoo-community.org",
+    "oca+oca-travis@odoo-community.org",
+    "oca-ci@odoo-community.org",
+    "shopinvader-git-bot@shopinvader.com",
+]
 
 
 class MigrateAddon(Output):
@@ -131,6 +146,7 @@ class MigrateAddon(Output):
         if self.app.repo.untracked_files:
             raise click.ClickException("Untracked files detected, abort")
         self._checkout_base_branch()
+        squashable_commits = []
         if self._create_mig_branch():
             # Case where the addon shouldn't be ported (blacklisted)
             if self.app.storage.dirty:
@@ -141,11 +157,30 @@ class MigrateAddon(Output):
                 self._generate_patches(patches_dir)
                 self._apply_patches(patches_dir)
             g.run_pre_commit(self.app.repo, self.app.addon)
+            # identify squashable commits
+            commits = [
+                commit
+                for commit in self.app.repo.iter_commits(
+                    f"{self.app.target_version}...HEAD"
+                )
+                if self.is_squashable_commit(commit)
+            ]
+            for commit in commits:
+                squashable_commits.append(
+                    f"\t\t{bc.DIM}{commit.hexsha[:8]} " f"{commit.summary}{bc.ENDD}"
+                )
         # Check if the addon has commits that update neighboring addons to
         # make it work properly
         PortAddonPullRequest(self.app, push_branch=False).run()
-        self._print_tips()
+        self._print_tips(squashable_commits=squashable_commits)
         return True, None
+
+    def is_squashable_commit(self, commit):
+        if any([msg in commit.summary for msg in MESSAGE_TO_SQUASH]):
+            return True
+        if commit.author.email in AUTHOR_EMAILS_TO_SQUASH:
+            return True
+        return False
 
     def _checkout_base_branch(self):
         # Ensure to not start to work from a working branch
@@ -204,7 +239,7 @@ class MigrateAddon(Output):
             f"has been migrated."
         )
 
-    def _print_tips(self, blacklisted=False):
+    def _print_tips(self, blacklisted=False, squashable_commits=[]):
         mig_tasks_url = MIG_TASKS_URL.format(version=self.app.target_version)
         pr_title_encoded = urllib.parse.quote(
             MIG_NEW_PR_TITLE.format(
@@ -238,5 +273,8 @@ class MigrateAddon(Output):
             mig_branch=self.mig_branch.name,
             mig_tasks_url=mig_tasks_url,
             new_pr_url=new_pr_url,
+            squashable_commits=(
+                "\n".join(squashable_commits) if squashable_commits else ""
+            ),
         )
         print(tips)
