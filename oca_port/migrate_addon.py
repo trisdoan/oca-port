@@ -7,9 +7,12 @@ import urllib.parse
 
 import click
 
+from oca_port.squash_bot_commits import SquashBotCommit
+
 from .port_addon_pr import PortAddonPullRequest
 from .utils import git as g
 from .utils.misc import Output, bcolors as bc
+import subprocess
 
 MIG_BRANCH_NAME = "{branch}-mig-{addon}"
 MIG_MERGE_COMMITS_URL = (
@@ -56,6 +59,20 @@ BLACKLIST_TIPS = "\n".join(
         f"\t\t=> {bc.BOLD}" "{new_pr_url}" f"{bc.END}",
     ]
 )
+
+MESSAGE_TO_SQUASH = [
+    "Added translation using Weblate",
+    "Translated using Weblate",
+    "Update translation files",
+]
+AUTHOR_EMAILS_TO_SQUASH = [
+    "transbot@odoo-community.org",
+    "noreply@weblate.org",
+    "oca-git-bot@odoo-community.org",
+    "oca+oca-travis@odoo-community.org",
+    "oca-ci@odoo-community.org",
+    "shopinvader-git-bot@shopinvader.com",
+]
 
 
 class MigrateAddon(Output):
@@ -131,6 +148,7 @@ class MigrateAddon(Output):
         if self.app.repo.untracked_files:
             raise click.ClickException("Untracked files detected, abort")
         self._checkout_base_branch()
+        squashable_commits = []
         if self._create_mig_branch():
             # Case where the addon shouldn't be ported (blacklisted)
             if self.app.storage.dirty:
@@ -141,6 +159,16 @@ class MigrateAddon(Output):
                 self._generate_patches(patches_dir)
                 self._apply_patches(patches_dir)
             g.run_pre_commit(self.app.repo, self.app.addon)
+            # # TODO: move to SquashBotCommit
+            # # identify squashable commits
+            # commits = [
+            #     commit
+            #     for commit in self.app.repo.iter_commits(
+            #         f"{self.app.target_version}...HEAD"
+            #     )
+            #     if self.is_squashable_commit(commit)
+            # ]
+            # SquashBotCommit(self.app, commits).run()
         # Check if the addon has commits that update neighboring addons to
         # make it work properly
         PortAddonPullRequest(self.app, push_branch=False).run()
