@@ -159,28 +159,21 @@ class MigrateAddon(Output):
                 self._generate_patches(patches_dir)
                 self._apply_patches(patches_dir)
             g.run_pre_commit(self.app.repo, self.app.addon)
-            # TODO: move to SquashBotCommit
-            # identify squashable commits
-            commits = [
-                commit
-                for commit in self.app.repo.iter_commits(
-                    f"{self.app.target_version}...HEAD"
-                )
-                if self.is_squashable_commit(commit)
-            ]
-            SquashBotCommit(self.app, commits).run()
+            # # TODO: move to SquashBotCommit
+            # # identify squashable commits
+            # commits = [
+            #     commit
+            #     for commit in self.app.repo.iter_commits(
+            #         f"{self.app.target_version}...HEAD"
+            #     )
+            #     if self.is_squashable_commit(commit)
+            # ]
+            # SquashBotCommit(self.app, commits).run()
         # Check if the addon has commits that update neighboring addons to
         # make it work properly
         PortAddonPullRequest(self.app, push_branch=False).run()
         self._print_tips()
         return True, None
-
-    def is_squashable_commit(self, commit):
-        if any([msg in commit.summary for msg in MESSAGE_TO_SQUASH]):
-            return True
-        if commit.author.email in AUTHOR_EMAILS_TO_SQUASH:
-            return True
-        return False
 
     def _checkout_base_branch(self):
         # Ensure to not start to work from a working branch

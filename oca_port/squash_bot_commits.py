@@ -6,14 +6,15 @@ import tempfile
 import os
 import re
 
+# 1st: no need to seperate squasht to parent or squash to others, just squash if conflict -> abort
+## when squash, check if destination commit == target.commit.parents[0], if yes -> no need to reorder
+# 2nd: run iter_commits constantly to get updated commit
+
 
 class SquashBotCommit(Output):
 
-    def __init__(self, app, squashable_commits) -> None:
+    def __init__(self, app) -> None:
         self.app = app
-        self.squashable_commits = {}
-        for commit in squashable_commits:
-            self.squashable_commits[commit.hexsha[:9]] = commit
 
     def run(self):
         if self.app.non_interactive or self.app.dry_run:
@@ -24,6 +25,13 @@ class SquashBotCommit(Output):
                 bold=True,
             ),
         )
+        commits = [
+            commit
+            for commit in self.app.repo.iter_commits(
+                f"{self.app.target_version}...HEAD"
+            )
+            if self.is_squashable_commit(commit)
+        ]
         for hexsha, commit in self.squashable_commits.copy().items():
             is_squashed = self._squash(
                 self.squashable_commits[hexsha],
@@ -47,7 +55,6 @@ class SquashBotCommit(Output):
         return True
 
     def _squash(self, commit, parent_commit, reorder=False):
-        # TODO: conflict handle: break the flow and allow user to handle conflict or skip
         confirm = "\n".join(
             [
                 "\nCommits to Squash:",
@@ -56,7 +63,6 @@ class SquashBotCommit(Output):
             ]
         )
         if not click.confirm(confirm):
-            # TODO: in case of not squashing into parent, how to revert if accidentally chose wrong index
             return False
         base_commit = parent_commit.parents[0].hexsha
         # TODO: change variable_name
@@ -129,3 +135,10 @@ class SquashBotCommit(Output):
     def _abort_rebase(self):
         self._print()
         self.app.repo.git.rebase("--abort")
+
+    # def is_squashable_commit(self, commit):
+    #     if any([msg in commit.summary for msg in MESSAGE_TO_SQUASH]):
+    #         return True
+    #     if commit.author.email in AUTHOR_EMAILS_TO_SQUASH:
+    #         return True
+    #     return False
