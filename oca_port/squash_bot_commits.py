@@ -58,7 +58,7 @@ class SquashBotCommits(Output):
                 for c in self.all_commits
                 if c._is_same_language(target_commit)
                 and c not in result
-                and not c.__eq__(target_commit)
+                and c != target_commit
             ]
             if valid_commits:
                 result.extend(valid_commits)
@@ -113,8 +113,23 @@ class SquashBotCommits(Output):
         self._print(f"0) {bc.BOLD}Skip this commit{bc.END}")
         for idx, c in enumerate(available_commits):
             self._print(f"{idx + 1}) {bc.OKCYAN}{c.hexsha[:8]}{bc.ENDC} {c.summary}")
-        choice = click.prompt("Select a commit to squash into:", type=int)
-        if not choice:
+
+        def is_valid(val):
+            try:
+                value = int(val)
+            except ValueError:
+                raise click.BadParameter("Please enter a valid number.")
+
+            if value < 0 or value > len(available_commits):
+                raise click.BadParameter("Please enter a valid number.")
+            return value
+
+        choice = click.prompt(
+            "Select a commit to squash into:",
+            default=0,
+            value_proc=is_valid,
+        )
+        if not choice:  # if choice = 0
             self.skipped_commits.append(commit)
             return False
         selected_commit = available_commits[choice - 1]
@@ -181,6 +196,4 @@ class SquashBotCommits(Output):
         self.app.repo.git.rebase("--abort")
 
     def is_skipped_commit(self, commit):
-        return any(
-            skipped_commit.__eq__(commit) for skipped_commit in self.skipped_commits
-        )
+        return commit in self.skipped_commits
