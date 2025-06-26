@@ -86,15 +86,17 @@ class PortAddonPullRequest(Output):
             "checking PRs to port..."
         )
         branches_diff = BranchesDiff(self.app)
-        if branches_diff.commits_diff["addon"]:
+        commits_by_pr = branches_diff.group_commits_by_pr(branches_diff.commits_diff)
+        if commits_by_pr["addon"]:
             branches_diff.print_diff(verbose=self.app.verbose)
-        if branches_diff.commits_diff["satellite"]:
+        if commits_by_pr["satellite"]:
             branches_diff.print_satellite_diff(verbose=self.app.verbose)
         if self.app.non_interactive:
-            if branches_diff.commits_diff["addon"]:
+            if commits_by_pr["addon"]:
                 # If an output is defined we return the result in the expected format
                 if self.app.output:
-                    self._results["results"] = branches_diff.serialized_diff
+                    serialized_diff = branches_diff._serialize_diff(commits_by_pr)
+                    self._results["results"] = serialized_diff
                     return True, self._render_output(self.app.output, self._results)
                 if self.app.cli:
                     # Exit with an error code if commits are eligible for (back)porting
@@ -621,7 +623,6 @@ class BranchesDiff(Output):
             self.app.to_branch.ref()
         )
         self.commits_diff = self.get_commits_diff()
-        self.serialized_diff = self._serialize_diff(self.commits_diff)
         # Once the analyze is done, we store the cache on disk
         self.app.cache.save()
 
@@ -652,13 +653,10 @@ class BranchesDiff(Output):
             com = g.Commit(
                 commit, addons_path=self.app.addons_rootdir, cache=self.app.cache
             )
-            if self._skip_commit(com):
+            if self.app.skip_commit and self._skip_commit(com):
                 continue
             commits_list.append(com)
             commits_by_sha[commit.hexsha] = com
-        # Put ancestors at the beginning of the list to loop with
-        # the expected order
-        commits_list.reverse()
         return commits_list, commits_by_sha
 
     @staticmethod
@@ -790,6 +788,16 @@ class BranchesDiff(Output):
         self._print("\n".join(lines_to_print))
 
     def get_commits_diff(self):
+        """Returns the commits which do not exist in `to_branch`"""
+        unported_commits = []
+        for commit in self.from_branch_path_commits:
+            if commit in self.to_branch_all_commits:
+                self.app.cache.mark_commit_as_ported(commit.hexsha)
+                break
+            unported_commits.append(commit)
+        return unported_commits
+
+    def group_commits_by_pr(self, commits):
         """Returns the commits which do not exist in `to_branch`, grouped by
         their related Pull Request.
 
@@ -804,22 +812,7 @@ class BranchesDiff(Output):
         """
         commits_by_pr = defaultdict(list)
         fake_pr = g.PullRequest(*[""] * 6)
-        # 1st loop to collect original PRs and stack orphaned commits in a fake PR
-        for commit in self.from_branch_path_commits:
-            if commit in self.to_branch_all_commits:
-                self.app.cache.mark_commit_as_ported(commit.hexsha)
-                continue
-            # Get related Pull Request if any,
-            # or fallback on a fake PR to host orphaned commits
-            # This call has two effects:
-            #   - put in cache original PRs (so the 2nd loop is faster)
-            #   - stack orphaned commits in fake PR
-            self._get_original_pr(commit, fallback_pr=fake_pr)
-        # 2nd loop to actually analyze the content of commits/PRs
-        for commit in self.from_branch_path_commits:
-            if commit in self.to_branch_all_commits:
-                self.app.cache.mark_commit_as_ported(commit.hexsha)
-                continue
+        for commit in commits:
             # Get related Pull Request if any,
             # or fallback on a fake PR that hosts orphaned commits
             pr = self._get_original_pr(commit, fallback_pr=fake_pr)
