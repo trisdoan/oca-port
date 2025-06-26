@@ -652,7 +652,7 @@ class BranchesDiff(Output):
             com = g.Commit(
                 commit, addons_path=self.app.addons_rootdir, cache=self.app.cache
             )
-            if self._skip_commit(com):
+            if self.app.skip_commit and self._skip_commit(com):
                 continue
             commits_list.append(com)
             commits_by_sha[commit.hexsha] = com
