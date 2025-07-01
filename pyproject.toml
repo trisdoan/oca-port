@@ -19,6 +19,7 @@ dependencies = [
     "gitpython",
     "requests",
     "giturlparse",
+  "pandas"
 ]
 requires-python = ">=3.8"
 dynamic = ["version"]
