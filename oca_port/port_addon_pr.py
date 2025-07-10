@@ -643,6 +643,7 @@ class BranchesDiff(Output):
             - a list of Commit objects `[Commit, ...]`
             - a dict of Commits objects grouped by SHA `{SHA: Commit, ...}`
         """
+        # FIXME: way to handle this CPU-intensive task
         commits = self.app.repo.iter_commits(branch, paths=path, max_count=5)
         commits_list = []
         commits_by_sha = {}

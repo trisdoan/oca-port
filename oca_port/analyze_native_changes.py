@@ -98,4 +98,4 @@ class AnalyzeNativeChanges(Output):
         )
         self.compute_changes(self.branches_diff)
         self.print_changes()
-        return True, None
+        return True, self._results
