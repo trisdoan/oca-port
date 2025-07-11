@@ -6,6 +6,7 @@ import json
 import os
 import re
 from collections import defaultdict
+from pathlib import Path
 
 MANIFEST_NAMES = ("__manifest__.py", "__openerp__.py")
 
@@ -125,3 +126,51 @@ def pr_ref_from_url(url):
     # url like 'https://github.com/OCA/edi/pull/371'
     org, repo, __, nr = url.split("/")[3:]
     return f"{org}/{repo}#{nr}"
+
+
+def list_versions_between(source, target):
+    source_info = parse_ref(source)
+    source_branch = None
+    if source_info:
+        source_branch = source_info["branch"]
+
+    target_info = parse_ref(target)
+    target_branch = None
+    if target_info:
+        target_branch = target_info["branch"]
+
+    def parse_version(version_str):
+        major, minor = map(int, version_str.split("."))
+        return major * 10 + minor  # Convert 15.0 to 150, 16.0 to 160
+
+    def format_version(version_int):
+        major = version_int // 10
+        minor = version_int % 10
+        return f"{major}.{minor}"
+
+    source_int = parse_version(source_branch)
+    target_int = parse_version(target_branch)
+    if source_int > target_int:
+        source_int, target_int = target_int, source_int
+
+    versions = []
+    for i in range(source_int, target_int + 1):
+        major = i // 10
+        minor = i % 10
+        if minor == 0:
+            versions.append(f"{major}.0")
+    versions.reverse()
+    return versions
+
+
+def find_module_path(repo_path: Path, module_name: str):
+    repo_path = Path(repo_path)
+    for path in repo_path.glob(f"**/{module_name}"):
+        if path.is_dir():
+            if (path / "__manifest__.py").exists() or (
+                path / "__openerp__.py"
+            ).exists():
+                return str(path)
+
+    error = f"Module {module_name} does not exist on {repo_path}"
+    raise ValueError(error)
