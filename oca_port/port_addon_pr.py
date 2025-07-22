@@ -86,15 +86,24 @@ class PortAddonPullRequest(Output):
             "checking PRs to port..."
         )
         branches_diff = BranchesDiff(self.app)
-        if branches_diff.commits_diff["addon"]:
-            branches_diff.print_diff(verbose=self.app.verbose)
-        if branches_diff.commits_diff["satellite"]:
-            branches_diff.print_satellite_diff(verbose=self.app.verbose)
+        commits_by_pr = branches_diff.get_commit_pr(branches_diff.commits_diff)
+        if commits_by_pr["addon"]:
+            branches_diff.print_diff(commits_by_pr["addon"], verbose=self.app.verbose)
+        if commits_by_pr["satellite"]:
+            branches_diff.print_satellite_diff(
+                commits_by_pr["satellite"], verbose=self.app.verbose
+            )
         if self.app.non_interactive:
-            if branches_diff.commits_diff["addon"]:
+            if commits_by_pr["addon"]:
                 # If an output is defined we return the result in the expected format
                 if self.app.output:
-                    self._results["results"] = branches_diff.serialized_diff
+                    data = {}
+                    for pr, commits in commits_by_pr["addon"].items():
+                        data[pr.number] = pr.to_dict()
+                        data[pr.number]["missing_commits"] = [
+                            commit.hexsha for commit in commits
+                        ]
+                    self._results["results"] = data
                     return True, self._render_output(self.app.output, self._results)
                 if self.app.cli:
                     # Exit with an error code if commits are eligible for (back)porting
@@ -608,29 +617,29 @@ class BranchesDiff(Output):
     def __init__(self, app):
         self.app = app
         self.path = self.app.addon_path
+        self.common_ancestor_sha = self._get_common_ancestor(
+            self.app.from_branch.ref(), self.app.to_branch.ref()
+        )
         self.from_branch_path_commits, _ = self._get_branch_commits(
-            self.app.from_branch.ref(), self.path
+            self.app.from_branch.ref(),
+            self.path,
         )
         self.from_branch_all_commits, _ = self._get_branch_commits(
-            self.app.from_branch.ref()
+            self.app.from_branch.ref(), self.app.repo_path
         )
         self.to_branch_path_commits, _ = self._get_branch_commits(
-            self.app.to_branch.ref(), self.path
+            self.app.to_branch.ref(),
+            self.path,
         )
         self.to_branch_all_commits, _ = self._get_branch_commits(
-            self.app.to_branch.ref()
+            self.app.to_branch.ref(), self.app.repo_path
         )
         self.commits_diff = self.get_commits_diff()
-        self.serialized_diff = self._serialize_diff(self.commits_diff)
         # Once the analyze is done, we store the cache on disk
         self.app.cache.save()
 
-    def _serialize_diff(self, commits_diff):
-        data = {}
-        for pr, commits in commits_diff["addon"].items():
-            data[pr.number] = pr.to_dict()
-            data[pr.number]["missing_commits"] = [commit.hexsha for commit in commits]
-        return data
+    def _get_common_ancestor(self, from_branch, to_branch):
+        return self.app.repo.merge_base(from_branch, to_branch)[0].hexsha
 
     def _get_branch_commits(self, branch, path="."):
         """Get commits from the local repository for the given `branch`.
@@ -643,7 +652,14 @@ class BranchesDiff(Output):
             - a list of Commit objects `[Commit, ...]`
             - a dict of Commits objects grouped by SHA `{SHA: Commit, ...}`
         """
-        commits = self.app.repo.iter_commits(branch, paths=path)
+        if self.common_ancestor_sha:
+            revs = [branch, f"^{self.common_ancestor_sha}"]
+            commits = self.app.repo.iter_commits(revs, paths=path)
+        else:
+            commits = self.app.repo.iter_commits(
+                branch,
+                paths=path,
+            )
         commits_list = []
         commits_by_sha = {}
         for commit in commits:
@@ -652,7 +668,7 @@ class BranchesDiff(Output):
             com = g.Commit(
                 commit, addons_path=self.app.addons_rootdir, cache=self.app.cache
             )
-            if self._skip_commit(com):
+            if self.app.skip_commit and self._skip_commit(com):
                 continue
             commits_list.append(com)
             commits_by_sha[commit.hexsha] = com
@@ -677,12 +693,11 @@ class BranchesDiff(Output):
             or all(path_to_skip(path) for path in commit.paths)
         )
 
-    def print_diff(self, verbose=False):
+    def print_diff(self, commits, verbose=False):
         lines_to_print = []
         fake_pr = None
         i = 0
-        key = "addon"
-        for i, pr in enumerate(self.commits_diff[key], 1):
+        for i, pr in enumerate(commits):
             if pr.number:
                 lines_to_print.append(
                     f"{i}) {bc.BOLD}{bc.OKBLUE}{pr.ref}{bc.END} "
@@ -701,20 +716,20 @@ class BranchesDiff(Output):
                 )
                 lines_to_print.append(f"\t=> Not ported: {pr_paths_not_ported}")
             lines_to_print.append(
-                f"\t=> {bc.BOLD}{bc.OKBLUE}{len(self.commits_diff[key][pr])} "
+                f"\t=> {bc.BOLD}{bc.OKBLUE}{len(commits[pr])} "
                 f"commit(s){bc.END} not (fully) ported"
             )
             if pr.number:
                 lines_to_print.append(f"\t=> {pr.url}")
             if verbose or not pr.number:
-                for commit in self.commits_diff[key][pr]:
+                for commit in commits[pr]:
                     lines_to_print.append(
                         f"\t\t{bc.DIM}{commit.hexsha[:8]} " f"{commit.summary}{bc.ENDD}"
                     )
         if fake_pr:
             # We have commits without PR, adapt the message
             i -= 1
-            nb_commits = len(self.commits_diff[key][fake_pr])
+            nb_commits = len(commits[fake_pr])
             message = (
                 f"{bc.BOLD}{bc.OKBLUE}{i} pull request(s){bc.END} "
                 f"and {bc.BOLD}{bc.OKBLUE}{nb_commits} commit(s) w/o "
@@ -729,12 +744,12 @@ class BranchesDiff(Output):
                 f"{self.app.from_branch.ref()} to {self.app.to_branch.ref()}"
             )
         lines_to_print.insert(0, message)
-        if self.commits_diff[key]:
+        if commits:
             lines_to_print.insert(1, "")
         self._print("\n".join(lines_to_print))
 
-    def print_satellite_diff(self, verbose=False):
-        nb_prs = len(self.commits_diff["satellite"])
+    def print_satellite_diff(self, commits, verbose=False):
+        nb_prs = len(commits)
         if not nb_prs:
             return
         self._print()
@@ -749,11 +764,7 @@ class BranchesDiff(Output):
         paths_ported = []
         paths_not_ported = []
         pr_paths_not_ported = sorted(
-            set(
-                itertools.chain.from_iterable(
-                    [pr.paths_not_ported for pr in self.commits_diff["satellite"]]
-                )
-            )
+            set(itertools.chain.from_iterable([pr.paths_not_ported for pr in commits]))
         )
         for path in pr_paths_not_ported:
             path_exists = g.check_path_exists(
@@ -790,6 +801,16 @@ class BranchesDiff(Output):
         self._print("\n".join(lines_to_print))
 
     def get_commits_diff(self):
+        """Returns the commits which do not exist in `to_branch`"""
+        commits_to_port = []
+        for commit in self.from_branch_path_commits:
+            if commit in self.to_branch_all_commits:
+                self.app.cache.mark_commit_as_ported(commit.hexsha)
+                continue
+            commits_to_port.append(commit)
+        return commits_to_port
+
+    def get_commit_pr(self, to_port_commits):
         """Returns the commits which do not exist in `to_branch`, grouped by
         their related Pull Request.
 
@@ -804,22 +825,7 @@ class BranchesDiff(Output):
         """
         commits_by_pr = defaultdict(list)
         fake_pr = g.PullRequest(*[""] * 6)
-        # 1st loop to collect original PRs and stack orphaned commits in a fake PR
-        for commit in self.from_branch_path_commits:
-            if commit in self.to_branch_all_commits:
-                self.app.cache.mark_commit_as_ported(commit.hexsha)
-                continue
-            # Get related Pull Request if any,
-            # or fallback on a fake PR to host orphaned commits
-            # This call has two effects:
-            #   - put in cache original PRs (so the 2nd loop is faster)
-            #   - stack orphaned commits in fake PR
-            self._get_original_pr(commit, fallback_pr=fake_pr)
-        # 2nd loop to actually analyze the content of commits/PRs
-        for commit in self.from_branch_path_commits:
-            if commit in self.to_branch_all_commits:
-                self.app.cache.mark_commit_as_ported(commit.hexsha)
-                continue
+        for commit in to_port_commits:
             # Get related Pull Request if any,
             # or fallback on a fake PR that hosts orphaned commits
             pr = self._get_original_pr(commit, fallback_pr=fake_pr)

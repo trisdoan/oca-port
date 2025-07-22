@@ -10,6 +10,7 @@ from . import utils
 from .exceptions import RemoteBranchValueError
 from .migrate_addon import MigrateAddon
 from .port_addon_pr import PortAddonPullRequest
+from .analyze_native_changes import AnalyzeNativeChanges
 from .utils.git import Branch
 from .utils.github import GitHub
 from .utils.misc import Output, bcolors as bc, extract_ref_info
@@ -77,6 +78,8 @@ class App(Output):
     clear_cache: bool = False
     github_token: str = None
     cli: bool = False  # Not documented, should not be used outside of the CLI
+    skip_commit: bool = True
+    min_lines: int = 0
 
     _available_outputs = ("json",)
 
@@ -319,3 +322,11 @@ class App(Output):
     def run_migrate(self):
         """Migrate an addon."""
         return MigrateAddon(self).run()
+
+    def run_analyze(self):
+        self._print(
+            f"Analyzing {bc.BOLD}{self.addon}{bc.END} "
+            f"from {bc.BOLD}{self.source.ref}{bc.END} "
+            f"to {bc.BOLD}{self.target.ref}{bc.END}"
+        )
+        return AnalyzeNativeChanges(self).run()
